@@ -1,4 +1,4 @@
-import type { PaletteColor, Region } from '../lib/types';
+import type { PaletteColor, Region, EditorMode } from '../lib/types';
 
 interface CanvasState {
   pixelMap: Uint8Array;
@@ -10,6 +10,9 @@ interface CanvasState {
   showNumbers: boolean;
   showGrouped: boolean;
   highlightColor: number;
+  mode: EditorMode;
+  contours: Uint32Array;
+  contourThickness: number;
 }
 
 export function createCanvas(
@@ -33,6 +36,9 @@ export function createCanvas(
     showNumbers: true,
     showGrouped: false,
     highlightColor: -1,
+    mode: 'pixel' as EditorMode,
+    contours: new Uint32Array(0),
+    contourThickness: 1,
   };
 
   // Zoom & pan state
@@ -65,7 +71,7 @@ export function createCanvas(
   container.appendChild(loadingOverlay);
 
   // Render function — ported from backup HTML
-  function render() {
+  function renderPixel() {
     if (state.width === 0 || state.height === 0) return;
 
     const cellSize = Math.max(1, scale);
@@ -176,6 +182,101 @@ export function createCanvas(
         ctx.fillText(num, rx, ry);
         ctx.globalAlpha = 1;
       }
+    }
+  }
+
+  function renderSmooth() {
+    if (state.width === 0 || state.height === 0) return;
+
+    const cw = Math.round(state.width * scale);
+    const ch = Math.round(state.height * scale);
+
+    cvs.width = cw;
+    cvs.height = ch;
+    cvs.style.width = cw + 'px';
+    cvs.style.height = ch + 'px';
+    cvs.style.left = offsetX + 'px';
+    cvs.style.top = offsetY + 'px';
+
+    const { pixelMap, palette, contours, showColored, highlightColor, showNumbers } = state;
+
+    // 1. Fill via ImageData
+    const imgData = ctx.createImageData(cw, ch);
+    const buf = imgData.data;
+
+    for (let y = 0; y < ch; y++) {
+      const srcY = Math.floor(y / scale);
+      for (let x = 0; x < cw; x++) {
+        const srcX = Math.floor(x / scale);
+        const idx = pixelMap[srcY * state.width + srcX];
+        const c = palette[idx];
+        const off = (y * cw + x) * 4;
+        if (showColored && c) {
+          const dimmed = highlightColor >= 0 && highlightColor !== idx;
+          buf[off] = c.r;
+          buf[off + 1] = c.g;
+          buf[off + 2] = c.b;
+          buf[off + 3] = dimmed ? 38 : 115;
+        } else {
+          buf[off] = 255;
+          buf[off + 1] = 255;
+          buf[off + 2] = 255;
+          buf[off + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    // 2. Draw contours
+    ctx.strokeStyle = 'rgba(60, 60, 60, 0.8)';
+    ctx.lineWidth = state.contourThickness;
+    ctx.beginPath();
+    for (let i = 0; i < contours.length; i += 4) {
+      ctx.moveTo(contours[i] * scale, contours[i + 1] * scale);
+      ctx.lineTo(contours[i + 2] * scale, contours[i + 3] * scale);
+    }
+    ctx.stroke();
+
+    // 3. Numbers (always grouped in smooth mode)
+    if (showNumbers && scale >= 4) {
+      const fontSize = Math.max(8, Math.min(scale * 0.55, 40));
+      ctx.font = `bold ${fontSize}px -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (const region of state.regions) {
+        const c = palette[region.colorIdx];
+        if (!c) continue;
+        const num = (region.colorIdx + 1).toString();
+        const rx = (region.cx + 0.5) * scale;
+        const ry = (region.cy + 0.5) * scale;
+
+        const metrics = ctx.measureText(num);
+        const tw = metrics.width + 6;
+        const th = fontSize + 4;
+
+        let pillAlpha = 0.7;
+        if (highlightColor >= 0 && highlightColor !== region.colorIdx) pillAlpha = 0.14;
+
+        ctx.globalAlpha = pillAlpha;
+        ctx.fillStyle = showColored ? `rgba(${c.r},${c.g},${c.b},0.85)` : 'rgba(255,255,255,0.85)';
+        ctx.beginPath();
+        ctx.roundRect(rx - tw / 2, ry - th / 2, tw, th, 3);
+        ctx.fill();
+
+        ctx.fillStyle = showColored ? ((c.r * 0.299 + c.g * 0.587 + c.b * 0.114) > 140 ? '#000' : '#fff') : '#333';
+        ctx.globalAlpha = (highlightColor >= 0 && highlightColor !== region.colorIdx) ? 0.2 : 1;
+        ctx.fillText(num, rx, ry);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function render() {
+    if (state.mode === 'smooth') {
+      renderSmooth();
+    } else {
+      renderPixel();
     }
   }
 

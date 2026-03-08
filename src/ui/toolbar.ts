@@ -1,4 +1,4 @@
-import type { ProjectSettings } from '../lib/types';
+import type { ProjectSettings, EditorMode } from '../lib/types';
 
 interface ToolbarCallbacks {
   onSettingsChange: (settings: Partial<ProjectSettings>) => void;
@@ -30,6 +30,7 @@ export function createToolbar(
   }
   let pixelTimeout: number | undefined;
   let toleranceTimeout: number | undefined;
+  let detailTimeout: number | undefined;
 
   container.innerHTML = `
     <button class="btn btn-ghost toolbar-back" title="Back">
@@ -40,16 +41,37 @@ export function createToolbar(
     <div class="toolbar-divider"></div>
 
     <div class="toolbar-group">
-      <button class="btn btn-ghost toolbar-colored ${initialSettings.showColored ? 'active' : ''}">Colored</button>
-      <button class="btn btn-ghost toolbar-white ${!initialSettings.showColored ? 'active' : ''}">White</button>
+      <button class="btn btn-ghost toolbar-mode-pixel ${initialSettings.mode === 'pixel' ? 'active' : ''}">Pixel</button>
+      <button class="btn btn-ghost toolbar-mode-smooth ${initialSettings.mode === 'smooth' ? 'active' : ''}">Smooth</button>
     </div>
 
     <div class="toolbar-divider"></div>
 
     <div class="toolbar-group">
+      <button class="btn btn-ghost toolbar-colored ${initialSettings.showColored ? 'active' : ''}">Colored</button>
+      <button class="btn btn-ghost toolbar-white ${!initialSettings.showColored ? 'active' : ''}">White</button>
+    </div>
+
+    <div class="toolbar-divider toolbar-pixel-only" ${initialSettings.mode === 'smooth' ? 'style="display:none"' : ''}></div>
+
+    <div class="toolbar-group toolbar-pixel-only" ${initialSettings.mode === 'smooth' ? 'style="display:none"' : ''}>
       <span class="toolbar-label">Pixel size</span>
       <input type="range" class="toolbar-pixel-slider" min="${minPixelSize}" max="${maxPixelSize}" value="${initialSettings.pixelSize}">
       <span class="toolbar-value toolbar-pixel-value">${gridLabel(initialSettings.pixelSize)}</span>
+    </div>
+
+    <div class="toolbar-group toolbar-smooth-only" ${initialSettings.mode === 'pixel' ? 'style="display:none"' : ''}>
+      <span class="toolbar-label">Detail</span>
+      <input type="range" class="toolbar-detail-slider" min="1" max="4" value="${initialSettings.detailLevel}">
+      <span class="toolbar-value toolbar-detail-value">${initialSettings.detailLevel}</span>
+    </div>
+
+    <div class="toolbar-divider toolbar-smooth-only" ${initialSettings.mode === 'pixel' ? 'style="display:none"' : ''}></div>
+
+    <div class="toolbar-group toolbar-smooth-only" ${initialSettings.mode === 'pixel' ? 'style="display:none"' : ''}>
+      <span class="toolbar-label">Contour</span>
+      <input type="range" class="toolbar-contour-slider" min="0.5" max="3" step="0.5" value="${initialSettings.contourThickness}">
+      <span class="toolbar-value toolbar-contour-value">${initialSettings.contourThickness}</span>
     </div>
 
     <div class="toolbar-divider"></div>
@@ -92,10 +114,16 @@ export function createToolbar(
 
   // Elements
   const btnBack = container.querySelector('.toolbar-back') as HTMLButtonElement;
+  const btnModePixel = container.querySelector('.toolbar-mode-pixel') as HTMLButtonElement;
+  const btnModeSmooth = container.querySelector('.toolbar-mode-smooth') as HTMLButtonElement;
   const btnColored = container.querySelector('.toolbar-colored') as HTMLButtonElement;
   const btnWhite = container.querySelector('.toolbar-white') as HTMLButtonElement;
   const pixelSlider = container.querySelector('.toolbar-pixel-slider') as HTMLInputElement;
   const pixelValue = container.querySelector('.toolbar-pixel-value') as HTMLSpanElement;
+  const detailSlider = container.querySelector('.toolbar-detail-slider') as HTMLInputElement;
+  const detailValue = container.querySelector('.toolbar-detail-value') as HTMLSpanElement;
+  const contourSlider = container.querySelector('.toolbar-contour-slider') as HTMLInputElement;
+  const contourValue = container.querySelector('.toolbar-contour-value') as HTMLSpanElement;
   const toleranceSlider = container.querySelector('.toolbar-tolerance-slider') as HTMLInputElement;
   const toleranceValue = container.querySelector('.toolbar-tolerance-value') as HTMLSpanElement;
   const btnNumbers = container.querySelector('.toolbar-numbers') as HTMLButtonElement;
@@ -108,6 +136,14 @@ export function createToolbar(
 
   // Back
   btnBack.addEventListener('click', () => callbacks.onBack());
+
+  // Mode toggle
+  btnModePixel.addEventListener('click', () => {
+    callbacks.onSettingsChange({ mode: 'pixel' as EditorMode });
+  });
+  btnModeSmooth.addEventListener('click', () => {
+    callbacks.onSettingsChange({ mode: 'smooth' as EditorMode });
+  });
 
   // Colored / White toggle
   btnColored.addEventListener('click', () => {
@@ -124,6 +160,21 @@ export function createToolbar(
     pixelTimeout = window.setTimeout(() => {
       callbacks.onSettingsChange({ pixelSize: parseInt(pixelSlider.value) });
     }, 300);
+  });
+
+  // Detail slider (debounced)
+  detailSlider.addEventListener('input', () => {
+    detailValue.textContent = detailSlider.value;
+    clearTimeout(detailTimeout);
+    detailTimeout = window.setTimeout(() => {
+      callbacks.onSettingsChange({ detailLevel: parseInt(detailSlider.value) });
+    }, 300);
+  });
+
+  // Contour slider (immediate)
+  contourSlider.addEventListener('input', () => {
+    contourValue.textContent = contourSlider.value;
+    callbacks.onSettingsChange({ contourThickness: parseFloat(contourSlider.value) });
   });
 
   // Tolerance slider (debounced)
@@ -171,6 +222,16 @@ export function createToolbar(
   });
 
   function updateSettings(s: ProjectSettings) {
+    // Mode toggle
+    btnModePixel.classList.toggle('active', s.mode === 'pixel');
+    btnModeSmooth.classList.toggle('active', s.mode === 'smooth');
+
+    // Show/hide mode-specific controls
+    const pixelOnly = container.querySelectorAll<HTMLElement>('.toolbar-pixel-only');
+    const smoothOnly = container.querySelectorAll<HTMLElement>('.toolbar-smooth-only');
+    pixelOnly.forEach(el => el.style.display = s.mode === 'pixel' ? '' : 'none');
+    smoothOnly.forEach(el => el.style.display = s.mode === 'smooth' ? '' : 'none');
+
     btnColored.classList.toggle('active', s.showColored);
     btnWhite.classList.toggle('active', !s.showColored);
     pixelSlider.value = String(s.pixelSize);
@@ -179,6 +240,12 @@ export function createToolbar(
     toleranceValue.textContent = String(s.tolerance);
     btnNumbers.classList.toggle('active', s.showNumbers);
     btnGrouped.classList.toggle('active', s.showGrouped);
+
+    // Update smooth sliders
+    detailSlider.value = String(s.detailLevel);
+    detailValue.textContent = String(s.detailLevel);
+    contourSlider.value = String(s.contourThickness);
+    contourValue.textContent = String(s.contourThickness);
   }
 
   return { updateSettings };

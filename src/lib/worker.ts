@@ -1,7 +1,7 @@
 // src/lib/worker.ts
 // Web Worker for color quantization + connected components detection
 
-import type { PaletteColor, Region } from './types';
+import type { PaletteColor, Region, WorkerInput, WorkerOutput } from './types';
 
 function colorDistance(r1: number, g1: number, b1: number, r2: number, g2: number, b2: number): number {
   return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
@@ -95,14 +95,41 @@ function findRegions(pixelMap: Uint8Array, width: number, height: number): Regio
   return regions;
 }
 
-self.onmessage = function (e: MessageEvent) {
-  const { pixelData, width, height, tolerance } = e.data;
-  const result = quantizeColors(pixelData, width, height, tolerance);
-  const regions = findRegions(result.pixelMap, width, height);
+function traceContours(map: Uint8Array, width: number, height: number): Uint32Array {
+  const segments: number[] = [];
 
-  self.postMessage(
-    { palette: result.palette, pixelMap: result.pixelMap, regions },
-    // @ts-expect-error transferable
-    [result.pixelMap.buffer],
-  );
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = map[y * width + x];
+
+      // Check right neighbor
+      if (x < width - 1 && map[y * width + (x + 1)] !== idx) {
+        segments.push(x + 1, y, x + 1, y + 1);
+      }
+
+      // Check bottom neighbor
+      if (y < height - 1 && map[(y + 1) * width + x] !== idx) {
+        segments.push(x, y + 1, x + 1, y + 1);
+      }
+    }
+  }
+
+  return new Uint32Array(segments);
+}
+
+self.onmessage = (e: MessageEvent<WorkerInput>) => {
+  const { pixelData, width, height, tolerance, mode } = e.data;
+  const { palette, pixelMap } = quantizeColors(pixelData, width, height, tolerance);
+  const regions = findRegions(pixelMap, width, height);
+
+  const result: WorkerOutput = { palette, pixelMap, regions };
+  const transfer: ArrayBuffer[] = [pixelMap.buffer as ArrayBuffer];
+
+  if (mode === 'smooth') {
+    result.contours = traceContours(pixelMap, width, height);
+    transfer.push(result.contours.buffer as ArrayBuffer);
+  }
+
+  // @ts-expect-error transferable
+  self.postMessage(result, transfer);
 };

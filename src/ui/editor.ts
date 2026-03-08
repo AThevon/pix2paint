@@ -1,9 +1,10 @@
 import { getProject, saveProject } from '../lib/db';
-import { pixelise, createWorker, processImage, exportCanvas } from '../lib/engine';
+import { pixelise, downscaleSmooth, createWorker, processImage, exportCanvas, exportCanvasSmooth } from '../lib/engine';
 import { createToolbar } from './toolbar';
 import { createCanvas } from './canvas';
 import { createSidebar } from './sidebar';
 import type { ProjectSettings } from '../lib/types';
+import { DEFAULT_SETTINGS } from '../lib/types';
 
 export async function renderEditor(
   app: HTMLElement,
@@ -24,11 +25,11 @@ export async function renderEditor(
     img.onload = () => resolve();
   });
 
-  const settings: ProjectSettings = { ...project.settings };
+  const settings: ProjectSettings = { ...DEFAULT_SETTINGS, ...project.settings };
   const worker = createWorker();
 
   // Keep latest result for export
-  let latestResult: { pixelMap: Uint8Array; palette: import('../lib/types').PaletteColor[]; regions: import('../lib/types').Region[] } | null = null;
+  let latestResult: { pixelMap: Uint8Array; palette: import('../lib/types').PaletteColor[]; regions: import('../lib/types').Region[]; contours?: Uint32Array } | null = null;
   let latestImgData: ImageData | null = null;
   let firstRender = true;
 
@@ -70,13 +71,20 @@ export async function renderEditor(
   // Process pipeline
   async function process() {
     canvas.showLoading(true);
-    const imgData = pixelise(img, settings.pixelSize);
+
+    let imgData: ImageData;
+    if (settings.mode === 'smooth') {
+      imgData = downscaleSmooth(img, settings.detailLevel);
+    } else {
+      imgData = pixelise(img, settings.pixelSize);
+    }
     latestImgData = imgData;
+
     try {
-      const result = await processImage(worker, imgData, settings.tolerance);
+      const result = await processImage(worker, imgData, settings.tolerance, settings.mode);
       latestResult = result;
       sidebar.update(result.palette, imgData.width, imgData.height);
-      // Wait for sidebar transition to finish before rendering + fitting
+
       setTimeout(() => {
         canvas.setState({
           pixelMap: result.pixelMap,
@@ -86,7 +94,10 @@ export async function renderEditor(
           height: imgData.height,
           showColored: settings.showColored,
           showNumbers: settings.showNumbers,
-          showGrouped: settings.showGrouped,
+          showGrouped: settings.mode === 'smooth' ? true : settings.showGrouped,
+          mode: settings.mode,
+          contours: result.contours ?? new Uint32Array(0),
+          contourThickness: settings.contourThickness,
         });
         canvas.fitToView();
         canvas.showLoading(false);
@@ -114,23 +125,29 @@ export async function renderEditor(
     settings,
     {
       onSettingsChange: async (partial) => {
-        const needsReprocess = 'pixelSize' in partial || 'tolerance' in partial;
+        const needsReprocess =
+          'pixelSize' in partial ||
+          'tolerance' in partial ||
+          'mode' in partial ||
+          'detailLevel' in partial;
+
         Object.assign(settings, partial);
         toolbar.updateSettings(settings);
 
         if ('sidebarOpen' in partial) {
           sidebar.toggle();
-          // Refit canvas after sidebar transition (250ms)
           setTimeout(() => canvas.fitToView(), 300);
         }
 
         if (needsReprocess) {
           await process();
+        } else if ('contourThickness' in partial) {
+          canvas.setState({ contourThickness: settings.contourThickness });
         } else {
           canvas.setState({
             showColored: settings.showColored,
             showNumbers: settings.showNumbers,
-            showGrouped: settings.showGrouped,
+            showGrouped: settings.mode === 'smooth' ? true : settings.showGrouped,
           });
         }
         autoSave();
@@ -139,19 +156,37 @@ export async function renderEditor(
         let result = latestResult;
         let imgData = latestImgData;
         if (!result || !imgData) {
-          imgData = pixelise(img, settings.pixelSize);
-          result = await processImage(worker, imgData, settings.tolerance);
+          imgData = settings.mode === 'smooth'
+            ? downscaleSmooth(img, settings.detailLevel)
+            : pixelise(img, settings.pixelSize);
+          result = await processImage(worker, imgData, settings.tolerance, settings.mode);
         }
-        const blob = await exportCanvas({
-          pixelMap: result.pixelMap,
-          palette: result.palette,
-          regions: result.regions,
-          width: imgData.width,
-          height: imgData.height,
-          showNumbers: mode !== 'none',
-          showGrouped: mode === 'grouped',
-          showColored: settings.showColored,
-        });
+
+        let blob: Blob;
+        if (settings.mode === 'smooth' && result.contours) {
+          blob = await exportCanvasSmooth({
+            pixelMap: result.pixelMap,
+            palette: result.palette,
+            regions: result.regions,
+            contours: result.contours,
+            width: imgData.width,
+            height: imgData.height,
+            showColored: settings.showColored,
+            contourThickness: settings.contourThickness,
+          });
+        } else {
+          blob = await exportCanvas({
+            pixelMap: result.pixelMap,
+            palette: result.palette,
+            regions: result.regions,
+            width: imgData.width,
+            height: imgData.height,
+            showNumbers: mode !== 'none',
+            showGrouped: mode === 'grouped',
+            showColored: settings.showColored,
+          });
+        }
+
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;

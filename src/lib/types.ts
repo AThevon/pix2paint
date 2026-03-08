@@ -6,6 +6,8 @@ export interface PaletteColor {
   count: number;
 }
 
+export type EditorMode = 'pixel' | 'smooth';
+
 export interface Region {
   colorIdx: number;
   cx: number;
@@ -19,6 +21,9 @@ export interface ProjectSettings {
   showNumbers: boolean;
   showGrouped: boolean;
   sidebarOpen: boolean;
+  mode: EditorMode;
+  detailLevel: number;
+  contourThickness: number;
 }
 
 export interface Project {
@@ -36,12 +41,14 @@ export interface WorkerInput {
   width: number;
   height: number;
   tolerance: number;
+  mode: EditorMode;
 }
 
 export interface WorkerOutput {
   palette: PaletteColor[];
   pixelMap: Uint8Array;
   regions: Region[];
+  contours?: Uint32Array;
 }
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
@@ -51,4 +58,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   showNumbers: true,
   showGrouped: false,
   sidebarOpen: true,
+  mode: 'pixel',
+  detailLevel: 2,
+  contourThickness: 1,
 };
