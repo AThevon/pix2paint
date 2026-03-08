@@ -88,6 +88,7 @@ function findRegions(pixelMap: Uint8Array, width: number, height: number): Regio
         colorIdx,
         cx: Math.round(sumX / count),
         cy: Math.round(sumY / count),
+        pixelCount: count,
       });
     }
   }

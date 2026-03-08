@@ -12,6 +12,7 @@ export interface Region {
   colorIdx: number;
   cx: number;
   cy: number;
+  pixelCount: number;
 }
 
 export interface ProjectSettings {

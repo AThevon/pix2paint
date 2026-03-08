@@ -230,7 +230,7 @@ export async function exportCanvasSmooth(options: {
         buf[off] = c.r;
         buf[off + 1] = c.g;
         buf[off + 2] = c.b;
-        buf[off + 3] = 115;
+        buf[off + 3] = 255;
       } else {
         buf[off] = 255;
         buf[off + 1] = 255;
@@ -257,7 +257,10 @@ export async function exportCanvasSmooth(options: {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
+  const minRegionSize = Math.max(20, width * height * 0.0005);
+
   for (const region of regions) {
+    if (region.pixelCount < minRegionSize) continue;
     const c = palette[region.colorIdx];
     if (!c) continue;
     const rx = (region.cx + 0.5) * exportScale;

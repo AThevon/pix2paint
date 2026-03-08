@@ -51,6 +51,7 @@ export function createCanvas(
   let dragOffsetX = 0;
   let dragOffsetY = 0;
   let renderPending = false;
+  let snapAnimId = 0;
 
   // Create DOM elements
   const cvs = document.createElement('canvas');
@@ -188,35 +189,40 @@ export function createCanvas(
   function renderSmooth() {
     if (state.width === 0 || state.height === 0) return;
 
-    const cw = Math.round(state.width * scale);
-    const ch = Math.round(state.height * scale);
+    // Viewport-based rendering: canvas = container size, not image*scale
+    const rect = container.getBoundingClientRect();
+    const cw = Math.ceil(rect.width);
+    const ch = Math.ceil(rect.height);
 
     cvs.width = cw;
     cvs.height = ch;
     cvs.style.width = cw + 'px';
     cvs.style.height = ch + 'px';
-    cvs.style.left = offsetX + 'px';
-    cvs.style.top = offsetY + 'px';
+    cvs.style.left = '0px';
+    cvs.style.top = '0px';
 
     const { pixelMap, palette, contours, showColored, highlightColor, showNumbers } = state;
 
-    // 1. Fill via ImageData
+    // 1. Fill via ImageData — only render visible pixels
     const imgData = ctx.createImageData(cw, ch);
     const buf = imgData.data;
 
-    for (let y = 0; y < ch; y++) {
-      const srcY = Math.floor(y / scale);
-      for (let x = 0; x < cw; x++) {
-        const srcX = Math.floor(x / scale);
-        const idx = pixelMap[srcY * state.width + srcX];
+    for (let sy = 0; sy < ch; sy++) {
+      const srcY = Math.floor((sy - offsetY) / scale);
+      if (srcY < 0 || srcY >= state.height) continue;
+      const rowOff = srcY * state.width;
+      for (let sx = 0; sx < cw; sx++) {
+        const srcX = Math.floor((sx - offsetX) / scale);
+        if (srcX < 0 || srcX >= state.width) continue;
+        const idx = pixelMap[rowOff + srcX];
         const c = palette[idx];
-        const off = (y * cw + x) * 4;
+        const off = (sy * cw + sx) * 4;
         if (showColored && c) {
           const dimmed = highlightColor >= 0 && highlightColor !== idx;
           buf[off] = c.r;
           buf[off + 1] = c.g;
           buf[off + 2] = c.b;
-          buf[off + 3] = dimmed ? 38 : 115;
+          buf[off + 3] = dimmed ? 80 : 255;
         } else {
           buf[off] = 255;
           buf[off + 1] = 255;
@@ -227,30 +233,46 @@ export function createCanvas(
     }
     ctx.putImageData(imgData, 0, 0);
 
-    // 2. Draw contours
+    // 2. Draw contours — in screen coordinates, skip off-screen
     ctx.strokeStyle = 'rgba(60, 60, 60, 0.8)';
     ctx.lineWidth = state.contourThickness;
     ctx.beginPath();
     for (let i = 0; i < contours.length; i += 4) {
-      ctx.moveTo(contours[i] * scale, contours[i + 1] * scale);
-      ctx.lineTo(contours[i + 2] * scale, contours[i + 3] * scale);
+      const x1 = contours[i] * scale + offsetX;
+      const y1 = contours[i + 1] * scale + offsetY;
+      const x2 = contours[i + 2] * scale + offsetX;
+      const y2 = contours[i + 3] * scale + offsetY;
+      if (x1 < -1 && x2 < -1) continue;
+      if (x1 > cw + 1 && x2 > cw + 1) continue;
+      if (y1 < -1 && y2 < -1) continue;
+      if (y1 > ch + 1 && y2 > ch + 1) continue;
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
     }
     ctx.stroke();
 
-    // 3. Numbers (always grouped in smooth mode)
-    if (showNumbers && scale >= 4) {
-      const fontSize = Math.max(8, Math.min(scale * 0.55, 40));
+    // 3. Numbers — fixed readable screen size, always visible
+    if (showNumbers && scale >= 2) {
+      const fontSize = Math.max(11, Math.min(scale * 0.5, 32));
       ctx.font = `bold ${fontSize}px -apple-system, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
+      const minRegionSize = Math.max(8, state.width * state.height * 0.0002);
+
       for (const region of state.regions) {
+        if (region.pixelCount < minRegionSize) continue;
         const c = palette[region.colorIdx];
         if (!c) continue;
-        const num = (region.colorIdx + 1).toString();
-        const rx = (region.cx + 0.5) * scale;
-        const ry = (region.cy + 0.5) * scale;
 
+        // Screen coordinates
+        const rx = (region.cx + 0.5) * scale + offsetX;
+        const ry = (region.cy + 0.5) * scale + offsetY;
+
+        // Skip off-screen
+        if (rx < -40 || rx > cw + 40 || ry < -40 || ry > ch + 40) continue;
+
+        const num = (region.colorIdx + 1).toString();
         const metrics = ctx.measureText(num);
         const tw = metrics.width + 6;
         const th = fontSize + 4;
@@ -289,26 +311,114 @@ export function createCanvas(
     });
   }
 
+  // Snap-back: animate zoom + position when image is too small or offset
+  function getMinScale(): number {
+    const rect = container.getBoundingClientRect();
+    const scaleX = rect.width / state.width;
+    const scaleY = rect.height / state.height;
+    return Math.min(scaleX, scaleY) * 0.95;
+  }
+
+  function getSnapTarget(): { x: number; y: number; s: number } | null {
+    if (state.width === 0 || state.height === 0) return null;
+    const rect = container.getBoundingClientRect();
+
+    // Snap scale up to min fit if too small
+    let targetScale = scale;
+    const minScale = getMinScale();
+    if (scale < minScale) {
+      targetScale = minScale;
+    }
+
+    const imgW = state.width * targetScale;
+    const imgH = state.height * targetScale;
+
+    // Recompute offset for target scale (keep center point stable)
+    const centerX = (rect.width / 2 - offsetX) / scale;
+    const centerY = (rect.height / 2 - offsetY) / scale;
+    let targetX = rect.width / 2 - centerX * targetScale;
+    let targetY = rect.height / 2 - centerY * targetScale;
+
+    // Center if smaller, clamp if larger
+    if (imgW <= rect.width) {
+      targetX = (rect.width - imgW) / 2;
+    } else {
+      if (targetX > 0) targetX = 0;
+      if (targetX + imgW < rect.width) targetX = rect.width - imgW;
+    }
+
+    if (imgH <= rect.height) {
+      targetY = (rect.height - imgH) / 2;
+    } else {
+      if (targetY > 0) targetY = 0;
+      if (targetY + imgH < rect.height) targetY = rect.height - imgH;
+    }
+
+    const needsSnap =
+      Math.abs(targetScale - scale) > 0.01 ||
+      Math.abs(targetX - offsetX) > 1 ||
+      Math.abs(targetY - offsetY) > 1;
+
+    return needsSnap ? { x: targetX, y: targetY, s: targetScale } : null;
+  }
+
+  function snapBack() {
+    const target = getSnapTarget();
+    if (!target) return;
+
+    cancelAnimationFrame(snapAnimId);
+    const startX = offsetX;
+    const startY = offsetY;
+    const startS = scale;
+    const endX = target.x;
+    const endY = target.y;
+    const endS = target.s;
+    const startTime = performance.now();
+    const duration = 280;
+
+    function animate(now: number) {
+      const t = Math.min(1, (now - startTime) / duration);
+      const ease = 1 - Math.pow(1 - t, 3);
+      scale = startS + (endS - startS) * ease;
+      offsetX = startX + (endX - startX) * ease;
+      offsetY = startY + (endY - startY) * ease;
+      render();
+      if (t < 1) {
+        snapAnimId = requestAnimationFrame(animate);
+      }
+    }
+    snapAnimId = requestAnimationFrame(animate);
+  }
+
   // Zoom (wheel)
+  let snapWheelTimer = 0;
   function onWheel(e: WheelEvent) {
     e.preventDefault();
+    cancelAnimationFrame(snapAnimId);
     const rect = container.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
 
     const oldScale = scale;
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    scale = Math.max(1, Math.min(200, scale * factor));
+    const minScale = getMinScale();
+    // Allow zooming slightly below min (elastic feel), snap back handles it
+    scale = Math.max(minScale * 0.5, Math.min(200, scale * factor));
 
     offsetX = mx - (mx - offsetX) * (scale / oldScale);
     offsetY = my - (my - offsetY) * (scale / oldScale);
 
     scheduleRender();
+
+    // Snap back after wheel stops (debounced)
+    clearTimeout(snapWheelTimer);
+    snapWheelTimer = window.setTimeout(snapBack, 150);
   }
 
   // Pan (mouse)
   function onMouseDown(e: MouseEvent) {
     isDragging = true;
+    cancelAnimationFrame(snapAnimId);
     dragStartX = e.clientX;
     dragStartY = e.clientY;
     dragOffsetX = offsetX;
@@ -323,7 +433,10 @@ export function createCanvas(
   }
 
   function onMouseUp() {
-    isDragging = false;
+    if (isDragging) {
+      isDragging = false;
+      snapBack();
+    }
   }
 
   // Resize
