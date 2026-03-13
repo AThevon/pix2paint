@@ -111,7 +111,7 @@ export async function renderHome(app: HTMLElement, onOpenEditor: (projectId?: st
       <main class="home-main">
         <section class="hero">
           <div class="hero-brand anim-fade-up">
-            <img src="/logo.svg" alt="Pix2Paint" width="64" height="64" class="hero-logo">
+            <img src="/pix2paint.png" alt="Pix2Paint" width="64" height="64" class="hero-logo">
             <h1 class="hero-name">Pix2Paint</h1>
           </div>
           <h2 class="hero-title anim-fade-up anim-delay-1">Turn any image<br>into a paint by numbers</h2>
