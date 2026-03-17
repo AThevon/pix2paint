@@ -4,8 +4,8 @@ interface SidebarCallbacks {
   onHighlight: (colorIdx: number) => void;
 }
 
-const chevronLeft = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
-const chevronRight = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>`;
+const chevronLeft = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
+const chevronRight = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>`;
 
 export function createSidebar(
   container: HTMLElement,
@@ -19,9 +19,10 @@ export function createSidebar(
 } {
   let open = initialOpen;
 
-  // Toggle button (positioned on the left edge of sidebar)
+  // Toggle button
   const toggleBtn = document.createElement('button');
   toggleBtn.className = 'sidebar-toggle';
+  toggleBtn.setAttribute('aria-label', 'Toggle color legend');
   toggleBtn.innerHTML = open ? chevronRight : chevronLeft;
   container.appendChild(toggleBtn);
 
@@ -29,7 +30,7 @@ export function createSidebar(
   const inner = document.createElement('div');
   inner.className = 'sidebar-inner';
   inner.innerHTML = `
-    <h3 class="sidebar-title">Legend</h3>
+    <h3 class="sidebar-title"><span class="sidebar-title-dot"></span> Color Legend</h3>
     <div class="sidebar-legend"></div>
     <div class="sidebar-info"></div>
   `;
@@ -75,9 +76,9 @@ export function createSidebar(
     });
 
     infoEl.innerHTML =
-      `Image: ${width} x ${height} px<br>` +
+      `Image: ${width} × ${height} px<br>` +
       `Colors: ${palette.length}<br>` +
-      `<br><em>Scroll to zoom, drag to pan</em>`;
+      `<br>Scroll to zoom, drag to pan`;
   }
 
   function isOpen() {
