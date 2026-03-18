@@ -72,6 +72,7 @@ function shortDate(): string {
 
 function projectCard(project: Project): string {
   const thumbUrl = URL.createObjectURL(project.thumbnail);
+  activeBlobUrls.push(thumbUrl);
   return `
     <div class="project-card" data-id="${project.id}">
       <div class="project-card-thumb">
@@ -100,49 +101,85 @@ function loadImage(blob: Blob): Promise<HTMLImageElement> {
   });
 }
 
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
+// Track blob URLs to revoke on re-render
+let activeBlobUrls: string[] = [];
+
+function revokeBlobUrls() {
+  activeBlobUrls.forEach(url => URL.revokeObjectURL(url));
+  activeBlobUrls = [];
+}
+
 // --- Main render ---
 
 export async function renderHome(app: HTMLElement, onOpenEditor: (projectId?: string) => void) {
+  revokeBlobUrls();
   const projects = await listProjects();
 
   app.innerHTML = `
     <div class="home">
       <main class="home-main">
         <section class="hero">
-          <div class="hero-brand anim-fade-up">
-            <img src="/pix2paint.png" alt="Pix2Paint" width="72" height="72" class="hero-logo">
-            <h1 class="hero-name">Pix2Paint</h1>
-          </div>
-          <h2 class="hero-title anim-fade-up anim-delay-1">Turn any image into<br>a <span class="hero-title-accent">paint by numbers</span></h2>
-          <p class="hero-subtitle anim-fade-up anim-delay-2">
-            Drop your image, we pixelate it, number every color,
-            and you just grab your brushes and paint.
-          </p>
-
-          <div class="steps anim-fade-up anim-delay-3">
-            <div class="step">
-              <div class="step-icon">${iconUpload}</div>
-              <div class="step-label">Upload</div>
-            </div>
-            <div class="step-arrow">${iconArrow}</div>
-            <div class="step">
-              <div class="step-icon">${iconGrid}</div>
-              <div class="step-label">Pixelate</div>
-            </div>
-            <div class="step-arrow">${iconArrow}</div>
-            <div class="step">
-              <div class="step-icon">${iconPaint}</div>
-              <div class="step-label">Paint!</div>
-            </div>
+          <!-- Elegant floating shapes -->
+          <div class="hero-shapes" aria-hidden="true">
+            <div class="elegant-shape shape-1"><div class="shape-inner"></div></div>
+            <div class="elegant-shape shape-2"><div class="shape-inner"></div></div>
+            <div class="elegant-shape shape-3"><div class="shape-inner"></div></div>
+            <div class="elegant-shape shape-4"><div class="shape-inner"></div></div>
+            <div class="elegant-shape shape-5"><div class="shape-inner"></div></div>
+            <div class="elegant-shape shape-6"><div class="shape-inner"></div></div>
+            <div class="elegant-shape shape-7"><div class="shape-inner"></div></div>
+            <div class="elegant-shape shape-8"><div class="shape-inner"></div></div>
           </div>
 
-          <div class="dropzone anim-fade-up-dropzone" id="dropzone">
-            <input type="file" id="file-input" accept="image/*" class="sr-only">
-            <div class="dropzone-content">
-              <div class="dropzone-icon">${iconUploadCloud}</div>
-              <p>Drop your image here</p>
-              <span>or</span>
-              <label for="file-input" class="btn btn-primary">Choose a file</label>
+          <div class="hero-split">
+            <div class="hero-left">
+              <div class="hero-brand anim-fade-up">
+                <img src="/pix2paint.png" alt="Pix2Paint" width="40" height="40" class="hero-logo">
+                <span class="hero-name">Pix2Paint</span>
+              </div>
+              <h1 class="hero-title anim-fade-up anim-delay-1">
+                Turn any image<br>into a
+                <span class="hero-title-accent">paint<br>by numbers</span>
+              </h1>
+              <div class="hero-badge anim-fade-up anim-delay-2">
+                <span class="hero-badge-dot"></span>
+                <span>Free &middot; No sign-up &middot; 100% browser</span>
+              </div>
+            </div>
+            <div class="hero-right">
+              <p class="hero-subtitle anim-fade-up anim-delay-2">
+                Drop your image, we pixelate it, number every color region,
+                and you grab your brushes and paint.
+              </p>
+
+              <div class="steps anim-fade-up anim-delay-3">
+                <div class="step">
+                  <div class="step-icon">${iconUpload}</div>
+                  <div class="step-label">Upload</div>
+                </div>
+                <div class="step-arrow">${iconArrow}</div>
+                <div class="step">
+                  <div class="step-icon">${iconGrid}</div>
+                  <div class="step-label">Pixelate</div>
+                </div>
+                <div class="step-arrow">${iconArrow}</div>
+                <div class="step">
+                  <div class="step-icon">${iconPaint}</div>
+                  <div class="step-label">Paint!</div>
+                </div>
+              </div>
+
+              <div class="dropzone anim-fade-up anim-delay-4" id="dropzone">
+                <input type="file" id="file-input" accept="image/*" class="sr-only">
+                <div class="dropzone-content">
+                  <div class="dropzone-icon">${iconUploadCloud}</div>
+                  <p>Drop your image here</p>
+                  <span>or</span>
+                  <label for="file-input" class="btn btn-primary">Choose a file</label>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -161,14 +198,7 @@ export async function renderHome(app: HTMLElement, onOpenEditor: (projectId?: st
       </main>
 
       <footer class="home-footer anim-fade-up anim-delay-6">
-        <p>Pix2Paint
-          <span class="footer-dot" style="background: #6C5CE7"></span>
-          Free
-          <span class="footer-dot" style="background: #FF6B6B"></span>
-          No sign-up
-          <span class="footer-dot" style="background: #00B894"></span>
-          100% in your browser
-        </p>
+        <p>Made with paint &amp; pixels</p>
       </footer>
     </div>
   `;
@@ -178,32 +208,61 @@ export async function renderHome(app: HTMLElement, onOpenEditor: (projectId?: st
   const dropzone = document.getElementById('dropzone')!;
   const fileInput = document.getElementById('file-input') as HTMLInputElement;
 
-  // After fade-up completes: set opacity explicitly so hover's animation:none won't reset it
-  dropzone.addEventListener('animationend', () => {
-    dropzone.style.opacity = '1';
-    dropzone.style.transform = 'translateY(0)';
-    dropzone.classList.remove('anim-fade-up-dropzone');
-  }, { once: true });
+  // No animation end listener needed — CSS animation-fill-mode: forwards handles final state
 
   async function handleFile(file: File) {
     if (!file.type.startsWith('image/')) return;
 
-    const blob = new Blob([file], { type: file.type });
-    const img = await loadImage(blob);
-    const thumbnail = await generateThumbnail(img);
+    if (file.size > MAX_FILE_SIZE) {
+      const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+      dropzone.classList.add('dropzone-error');
+      const content = dropzone.querySelector('.dropzone-content')!;
+      const origHTML = content.innerHTML;
+      content.innerHTML = `<p class="dropzone-error-text">File too large (${sizeMB}MB) — max 20MB</p>`;
+      setTimeout(() => {
+        dropzone.classList.remove('dropzone-error');
+        content.innerHTML = origHTML;
+      }, 3000);
+      return;
+    }
 
-    const project: Project = {
-      id: generateId(),
-      name: `Project ${shortDate()}`,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      imageBlob: blob,
-      thumbnail,
-      settings: { ...DEFAULT_SETTINGS },
-    };
+    // Show loading state
+    dropzone.classList.add('dropzone-loading');
+    const content = dropzone.querySelector('.dropzone-content')!;
+    const origHTML = content.innerHTML;
+    content.innerHTML = `
+      <div class="dropzone-icon">${iconUploadCloud}</div>
+      <p>Processing your image<span class="loader-dots"></span></p>
+    `;
 
-    await saveProject(project);
-    onOpenEditor(project.id);
+    try {
+      const blob = new Blob([file], { type: file.type });
+      const img = await loadImage(blob);
+      const thumbnail = await generateThumbnail(img);
+
+      const project: Project = {
+        id: generateId(),
+        name: `Project ${shortDate()}`,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        imageBlob: blob,
+        thumbnail,
+        settings: { ...DEFAULT_SETTINGS },
+      };
+
+      await saveProject(project);
+      onOpenEditor(project.id);
+    } catch {
+      dropzone.classList.remove('dropzone-loading');
+      content.innerHTML = origHTML;
+      dropzone.classList.add('dropzone-error');
+      const errorContent = dropzone.querySelector('.dropzone-content')!;
+      errorContent.innerHTML = `<p class="dropzone-error-text">Failed to process image — try another file</p>`;
+      setTimeout(() => {
+        dropzone.classList.remove('dropzone-error');
+        errorContent.innerHTML = origHTML;
+      }, 3000);
+    }
   }
 
   // Drag & drop

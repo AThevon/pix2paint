@@ -53,11 +53,17 @@ export function createSidebar(
     toggleBtn.innerHTML = open ? chevronRight : chevronLeft;
   }
 
+  let lockedColor = -1;
+
   function update(palette: PaletteColor[], width: number, height: number) {
     legendEl.innerHTML = '';
+    lockedColor = -1;
     palette.forEach((c, i) => {
       const item = document.createElement('div');
       item.className = 'legend-item';
+      item.tabIndex = 0;
+      item.setAttribute('role', 'button');
+      item.setAttribute('aria-label', `Color ${i + 1}: ${c.hex}`);
       item.innerHTML = `
         <span class="legend-swatch" style="background:${c.hex}"></span>
         <span class="legend-number">${i + 1}</span>
@@ -67,10 +73,31 @@ export function createSidebar(
         </span>
       `;
       item.addEventListener('mouseenter', () => {
-        callbacks.onHighlight(i);
+        if (lockedColor < 0) callbacks.onHighlight(i);
       });
       item.addEventListener('mouseleave', () => {
-        callbacks.onHighlight(-1);
+        if (lockedColor < 0) callbacks.onHighlight(-1);
+      });
+      // Click to lock/unlock highlight
+      item.addEventListener('click', () => {
+        if (lockedColor === i) {
+          lockedColor = -1;
+          item.classList.remove('locked');
+          callbacks.onHighlight(-1);
+        } else {
+          // Remove locked from previous
+          legendEl.querySelectorAll('.legend-item.locked').forEach(el => el.classList.remove('locked'));
+          lockedColor = i;
+          item.classList.add('locked');
+          callbacks.onHighlight(i);
+        }
+      });
+      // Keyboard: Enter/Space to toggle
+      item.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          item.click();
+        }
       });
       legendEl.appendChild(item);
     });

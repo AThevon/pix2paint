@@ -251,8 +251,9 @@ export function createCanvas(
     }
     ctx.stroke();
 
-    // 3. Numbers — fixed readable screen size, always visible
-    if (showNumbers && scale >= 2) {
+    // 3. Numbers — fade in gradually from scale 1.2
+    if (showNumbers && scale >= 1.2) {
+      const numberAlpha = Math.min(1, (scale - 1.2) / 0.8); // 0→1 over scale 1.2→2.0
       const fontSize = Math.max(11, Math.min(scale * 0.5, 32));
       ctx.font = `bold ${fontSize}px -apple-system, sans-serif`;
       ctx.textAlign = 'center';
@@ -277,8 +278,8 @@ export function createCanvas(
         const tw = metrics.width + 6;
         const th = fontSize + 4;
 
-        let pillAlpha = 0.7;
-        if (highlightColor >= 0 && highlightColor !== region.colorIdx) pillAlpha = 0.14;
+        let pillAlpha = 0.7 * numberAlpha;
+        if (highlightColor >= 0 && highlightColor !== region.colorIdx) pillAlpha = 0.14 * numberAlpha;
 
         ctx.globalAlpha = pillAlpha;
         ctx.fillStyle = showColored ? `rgba(${c.r},${c.g},${c.b},0.85)` : 'rgba(255,255,255,0.85)';
@@ -287,7 +288,7 @@ export function createCanvas(
         ctx.fill();
 
         ctx.fillStyle = showColored ? ((c.r * 0.299 + c.g * 0.587 + c.b * 0.114) > 140 ? '#000' : '#fff') : '#333';
-        ctx.globalAlpha = (highlightColor >= 0 && highlightColor !== region.colorIdx) ? 0.2 : 1;
+        ctx.globalAlpha = ((highlightColor >= 0 && highlightColor !== region.colorIdx) ? 0.2 : 1) * numberAlpha;
         ctx.fillText(num, rx, ry);
         ctx.globalAlpha = 1;
       }
@@ -446,10 +447,79 @@ export function createCanvas(
     }
   }
 
+  // Touch support — pinch zoom + pan
+  let touchStartDist = 0;
+  let touchStartScale = 1;
+  let touchOffsetX = 0;
+  let touchOffsetY = 0;
+  let touchMidX = 0;
+  let touchMidY = 0;
+
+  function getTouchDist(e: TouchEvent): number {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function getTouchMid(e: TouchEvent): { x: number; y: number } {
+    const rect = container.getBoundingClientRect();
+    return {
+      x: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
+      y: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top,
+    };
+  }
+
+  function onTouchStart(e: TouchEvent) {
+    cancelAnimationFrame(snapAnimId);
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      touchStartDist = getTouchDist(e);
+      touchStartScale = scale;
+      const mid = getTouchMid(e);
+      touchMidX = mid.x;
+      touchMidY = mid.y;
+      touchOffsetX = offsetX;
+      touchOffsetY = offsetY;
+    } else if (e.touches.length === 1) {
+      isDragging = true;
+      dragStartX = e.touches[0].clientX;
+      dragStartY = e.touches[0].clientY;
+      dragOffsetX = offsetX;
+      dragOffsetY = offsetY;
+    }
+  }
+
+  function onTouchMove(e: TouchEvent) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const dist = getTouchDist(e);
+      const mid = getTouchMid(e);
+      const newScale = Math.max(getMinScale() * 0.5, Math.min(200, touchStartScale * (dist / touchStartDist)));
+      offsetX = mid.x - (touchMidX - touchOffsetX) * (newScale / touchStartScale);
+      offsetY = mid.y - (touchMidY - touchOffsetY) * (newScale / touchStartScale);
+      scale = newScale;
+      scheduleRender();
+    } else if (e.touches.length === 1 && isDragging) {
+      offsetX = dragOffsetX + (e.touches[0].clientX - dragStartX);
+      offsetY = dragOffsetY + (e.touches[0].clientY - dragStartY);
+      scheduleRender();
+    }
+  }
+
+  function onTouchEnd(e: TouchEvent) {
+    if (e.touches.length === 0) {
+      isDragging = false;
+      snapBack();
+    }
+  }
+
   container.addEventListener('wheel', onWheel, { passive: false });
   container.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
+  container.addEventListener('touchstart', onTouchStart, { passive: false });
+  container.addEventListener('touchmove', onTouchMove, { passive: false });
+  container.addEventListener('touchend', onTouchEnd);
   window.addEventListener('resize', onResize);
 
   // Public methods
@@ -487,10 +557,14 @@ export function createCanvas(
   }
 
   function destroy() {
+    cancelAnimationFrame(snapAnimId);
     container.removeEventListener('wheel', onWheel);
     container.removeEventListener('mousedown', onMouseDown);
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
+    container.removeEventListener('touchstart', onTouchStart);
+    container.removeEventListener('touchmove', onTouchMove);
+    container.removeEventListener('touchend', onTouchEnd);
     window.removeEventListener('resize', onResize);
   }
 

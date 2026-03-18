@@ -20,10 +20,12 @@ export async function renderEditor(
 
   // Load image from blob
   const img = new Image();
-  img.src = URL.createObjectURL(project.imageBlob);
+  const imgUrl = URL.createObjectURL(project.imageBlob);
+  img.src = imgUrl;
   await new Promise<void>((resolve) => {
     img.onload = () => resolve();
   });
+  URL.revokeObjectURL(imgUrl);
 
   const settings: ProjectSettings = { ...DEFAULT_SETTINGS, ...project.settings };
   const worker = createWorker();
@@ -32,6 +34,21 @@ export async function renderEditor(
   let latestResult: { pixelMap: Uint8Array; palette: import('../lib/types').PaletteColor[]; regions: import('../lib/types').Region[]; contours?: Uint32Array } | null = null;
   let latestImgData: ImageData | null = null;
   let firstRender = true;
+
+  // Toast helper
+  function showToast(message: string, type: 'error' | 'info' = 'info') {
+    const existing = document.querySelector('.editor-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.className = `editor-toast editor-toast-${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('visible'));
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      setTimeout(() => toast.remove(), 300);
+    }, 3500);
+  }
 
   // Build layout
   app.innerHTML = `
@@ -104,8 +121,16 @@ export async function renderEditor(
         firstRender = false;
       }, firstRender ? 300 : 0);
     } catch (e) {
-      if ((e as Error).message !== 'cancelled') throw e;
       canvas.showLoading(false);
+      const msg = (e as Error).message;
+      if (msg === 'cancelled') return;
+      if (msg === 'worker_timeout') {
+        showToast('Processing timed out — try reducing detail or image size', 'error');
+      } else if (msg === 'worker_error') {
+        showToast('Processing failed — image may be too large', 'error');
+      } else {
+        showToast('An unexpected error occurred', 'error');
+      }
     }
   }
 
@@ -153,6 +178,9 @@ export async function renderEditor(
         autoSave();
       },
       onExport: async (mode) => {
+        // Reset highlight so export is clean
+        canvas.setHighlight(-1);
+
         let result = latestResult;
         let imgData = latestImgData;
         if (!result || !imgData) {
@@ -198,6 +226,7 @@ export async function renderEditor(
         worker.terminate();
         canvas.destroy();
         sidebar.destroy();
+        window.removeEventListener('keydown', onKeyDown);
         onBack();
       },
       onZoomFit: () => canvas.fitToView(),
@@ -208,6 +237,79 @@ export async function renderEditor(
 
   // Update toolbar with auto-computed pixelSize
   toolbar.updateSettings(settings);
+
+  // Keyboard shortcuts
+  function onKeyDown(e: KeyboardEvent) {
+    // Ignore if typing in an input
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+
+    switch (e.key) {
+      case '1':
+        if (settings.mode !== 'pixel') {
+          toolbar.updateSettings({ ...settings, mode: 'pixel' });
+          callbacks_ref.onSettingsChange({ mode: 'pixel' as import('../lib/types').EditorMode });
+        }
+        break;
+      case '2':
+        if (settings.mode !== 'smooth') {
+          toolbar.updateSettings({ ...settings, mode: 'smooth' });
+          callbacks_ref.onSettingsChange({ mode: 'smooth' as import('../lib/types').EditorMode });
+        }
+        break;
+      case 'r':
+      case 'R':
+        canvas.fitToView();
+        break;
+      case 'n':
+      case 'N':
+        callbacks_ref.onSettingsChange({ showNumbers: !settings.showNumbers });
+        break;
+      case 'g':
+      case 'G':
+        callbacks_ref.onSettingsChange({ showGrouped: !settings.showGrouped });
+        break;
+      case 'c':
+      case 'C':
+        callbacks_ref.onSettingsChange({ showColored: !settings.showColored });
+        break;
+      case 'Escape':
+        worker.terminate();
+        canvas.destroy();
+        sidebar.destroy();
+        window.removeEventListener('keydown', onKeyDown);
+        onBack();
+        break;
+    }
+  }
+
+  // Wrap settings change to keep ref accessible for keyboard shortcuts
+  const callbacks_ref = {
+    onSettingsChange: async (partial: Partial<ProjectSettings>) => {
+      const needsReprocess =
+        'pixelSize' in partial ||
+        'tolerance' in partial ||
+        'mode' in partial ||
+        'detailLevel' in partial;
+
+      Object.assign(settings, partial);
+      toolbar.updateSettings(settings);
+
+      if (needsReprocess) {
+        await process();
+      } else if ('contourThickness' in partial) {
+        canvas.setState({ contourThickness: settings.contourThickness });
+      } else {
+        canvas.setState({
+          showColored: settings.showColored,
+          showNumbers: settings.showNumbers,
+          showGrouped: settings.mode === 'smooth' ? true : settings.showGrouped,
+        });
+      }
+      autoSave();
+    },
+  };
+
+  window.addEventListener('keydown', onKeyDown);
 
   await process();
 }

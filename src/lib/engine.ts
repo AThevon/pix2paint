@@ -57,7 +57,12 @@ export function processImage(
   const pixelData = new Uint8ClampedArray(imgData.data);
 
   return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      reject(new Error('worker_timeout'));
+    }, 30000);
+
     worker.onmessage = (e: MessageEvent) => {
+      clearTimeout(timeout);
       if (jobId !== currentJobId) {
         reject(new Error('cancelled'));
         return;
@@ -72,7 +77,10 @@ export function processImage(
       };
       resolve(output);
     };
-    worker.onerror = (err) => reject(err);
+    worker.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error('worker_error'));
+    };
     worker.postMessage({
       pixelData,
       width: imgData.width,
@@ -126,7 +134,7 @@ export function exportCanvas(options: {
   const fontSize = Math.max(8, Math.min(cellSize * 0.55, 32));
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `bold ${fontSize}px 'Space Grotesk', sans-serif`;
+  ctx.font = `bold ${fontSize}px -apple-system, 'Segoe UI', sans-serif`;
 
   // Draw cells
   for (let y = 0; y < height; y++) {

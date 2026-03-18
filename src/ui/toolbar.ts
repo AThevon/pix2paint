@@ -28,9 +28,16 @@ export function createToolbar(
     const gh = Math.ceil(imgH / pixelSize);
     return `${pixelSize} → ${gw}×${gh}`;
   }
+  function exportLabel(pixelSize: number): string {
+    if (!imgW || !imgH) return '';
+    const gw = Math.ceil(imgW / pixelSize);
+    const gh = Math.ceil(imgH / pixelSize);
+    return `Export: ${gw * 40}×${gh * 40}px`;
+  }
   let pixelTimeout: number | undefined;
   let toleranceTimeout: number | undefined;
   let detailTimeout: number | undefined;
+  let contourTimeout: number | undefined;
 
   container.innerHTML = `
     <button class="btn btn-ghost toolbar-back" title="Back to projects">
@@ -56,13 +63,14 @@ export function createToolbar(
 
     <div class="toolbar-group toolbar-pixel-only" ${initialSettings.mode === 'smooth' ? 'style="display:none"' : ''}>
       <span class="toolbar-label">Size</span>
-      <input type="range" class="toolbar-pixel-slider" min="${minPixelSize}" max="${maxPixelSize}" value="${initialSettings.pixelSize}">
+      <input type="range" class="toolbar-pixel-slider" min="${minPixelSize}" max="${maxPixelSize}" value="${initialSettings.pixelSize}" aria-label="Pixel size">
       <span class="toolbar-value toolbar-pixel-value">${gridLabel(initialSettings.pixelSize)}</span>
+      <span class="toolbar-export-res" title="Export resolution">${exportLabel(initialSettings.pixelSize)}</span>
     </div>
 
     <div class="toolbar-group toolbar-smooth-only" ${initialSettings.mode === 'pixel' ? 'style="display:none"' : ''}>
       <span class="toolbar-label">Detail</span>
-      <input type="range" class="toolbar-detail-slider" min="1" max="4" value="${initialSettings.detailLevel}">
+      <input type="range" class="toolbar-detail-slider" min="1" max="4" value="${initialSettings.detailLevel}" aria-label="Detail level">
       <span class="toolbar-value toolbar-detail-value">${initialSettings.detailLevel}</span>
     </div>
 
@@ -70,7 +78,7 @@ export function createToolbar(
 
     <div class="toolbar-group toolbar-smooth-only" ${initialSettings.mode === 'pixel' ? 'style="display:none"' : ''}>
       <span class="toolbar-label">Contour</span>
-      <input type="range" class="toolbar-contour-slider" min="0.5" max="3" step="0.5" value="${initialSettings.contourThickness}">
+      <input type="range" class="toolbar-contour-slider" min="0.5" max="3" step="0.5" value="${initialSettings.contourThickness}" aria-label="Contour thickness">
       <span class="toolbar-value toolbar-contour-value">${initialSettings.contourThickness}</span>
     </div>
 
@@ -78,7 +86,7 @@ export function createToolbar(
 
     <div class="toolbar-group">
       <span class="toolbar-label">Tolerance</span>
-      <input type="range" class="toolbar-tolerance-slider" min="0" max="80" value="${initialSettings.tolerance}">
+      <input type="range" class="toolbar-tolerance-slider" min="0" max="80" value="${initialSettings.tolerance}" aria-label="Color tolerance">
       <span class="toolbar-value toolbar-tolerance-value">${initialSettings.tolerance}</span>
     </div>
 
@@ -158,12 +166,16 @@ export function createToolbar(
     callbacks.onSettingsChange({ showColored: false });
   });
 
+  const exportRes = container.querySelector('.toolbar-export-res') as HTMLSpanElement;
+
   // Pixel size slider (debounced)
   pixelSlider.addEventListener('input', () => {
-    pixelValue.textContent = gridLabel(parseInt(pixelSlider.value));
+    const val = parseInt(pixelSlider.value);
+    pixelValue.textContent = gridLabel(val);
+    if (exportRes) exportRes.textContent = exportLabel(val);
     clearTimeout(pixelTimeout);
     pixelTimeout = window.setTimeout(() => {
-      callbacks.onSettingsChange({ pixelSize: parseInt(pixelSlider.value) });
+      callbacks.onSettingsChange({ pixelSize: val });
     }, 300);
   });
 
@@ -176,10 +188,13 @@ export function createToolbar(
     }, 300);
   });
 
-  // Contour slider (immediate)
+  // Contour slider (debounced to avoid jank in smooth mode)
   contourSlider.addEventListener('input', () => {
     contourValue.textContent = contourSlider.value;
-    callbacks.onSettingsChange({ contourThickness: parseFloat(contourSlider.value) });
+    clearTimeout(contourTimeout);
+    contourTimeout = window.setTimeout(() => {
+      callbacks.onSettingsChange({ contourThickness: parseFloat(contourSlider.value) });
+    }, 50);
   });
 
   // Tolerance slider (debounced)
@@ -241,6 +256,7 @@ export function createToolbar(
     btnWhite.classList.toggle('active', !s.showColored);
     pixelSlider.value = String(s.pixelSize);
     pixelValue.textContent = gridLabel(s.pixelSize);
+    if (exportRes) exportRes.textContent = exportLabel(s.pixelSize);
     toleranceSlider.value = String(s.tolerance);
     toleranceValue.textContent = String(s.tolerance);
     btnNumbers.classList.toggle('active', s.showNumbers);
